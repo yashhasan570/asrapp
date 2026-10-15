@@ -2,13 +2,13 @@
 <html lang="en" class="antialiased">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Asr - Second Brain Engine</title>
-    <!-- Framework & Icon Dependencies -->
-    <script src="[https://unpkg.com/vue@3/dist/vue.global.prod.js](https://unpkg.com/vue@3/dist/vue.global.prod.js)"></script>
-    <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
-    <script src="[https://cdn.jsdelivr.net/npm/chart.js](https://cdn.jsdelivr.net/npm/chart.js)"></script>
-    <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css](https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css)">
+    <!-- Framework & Icon Dependencies (pinned + SRI) -->
+    <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js" integrity="sha384-W/1Fp/LgAYO/oTn9Gs+PbeWuMuq1eQCnUMPCeg8POmMYchhzxctjEqtbiCIxDOON" crossorigin="anonymous"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous">
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="manifest" href="manifest.json">
 </head>
@@ -140,7 +140,7 @@
                         <div class="absolute -left-[5px] top-3 w-4 h-4 rounded-full border-4 z-10" :class="[getTypeColor(task.type).bg, isDarkMode ? 'border-zinc-950' : 'border-slate-50']"></div>
                         <div class="p-4 rounded-2xl" :class="isDarkMode ? 'bg-zinc-900' : 'bg-white shadow-sm'">
                             <span class="text-[10px] font-black tracking-widest uppercase" :class="getTypeColor(task.type).text">{{ task.startTime }} - {{ task.endTime }}</span>
-                            <h3 class="text-sm font-bold mt-1">${ task.title }</h3>
+                            <h3 class="text-sm font-bold mt-1">{{ task.title }}</h3>
                         </div>
                     </div>
                 </div>

@@ -1,90 +1,157 @@
 const { createApp, ref, computed, nextTick } = Vue;
+const { timeToMins, localDate, isValidTask, calculateMetricsFeedback } = window.ASR;
+
+// Corrupt localStorage used to throw at boot and blank the whole app.
+const loadJSON = (key, fallback) => {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+    } catch (e) {
+        console.warn('[asr] dropping corrupt storage key:', key, e);
+        return fallback;
+    }
+};
 
 createApp({
     setup() {
         const activeTab = ref('manager');
         const isDarkMode = ref(localStorage.getItem('asr_theme') !== 'light');
-        const filterDate = ref(new Date().toISOString().split('T')[0]);
+        const filterDate = ref(localDate());
         const jsonPayload = ref('');
-        
-        const routines = ref(JSON.parse(localStorage.getItem('asr_routines')) || []);
-        const checklist = ref(JSON.parse(localStorage.getItem('asr_checklist')) || {});
-        const scores = ref(JSON.parse(localStorage.getItem('asr_scores')) || []);
+
+        const routines = ref(loadJSON('asr_routines', []));
+        const checklist = ref(loadJSON('asr_checklist', {}));
+        const scores = ref(loadJSON('asr_scores', []));
 
         const form = ref({ id: '', title: '', type: 'Self', date: filterDate.value, startTime: '', endTime: '' });
         const isEditing = computed(() => form.value.id !== '');
-        
+
         let chartInstance = null;
         const showAnalytics = ref(false);
         const currentScore = ref(0);
         const aiFeedback = ref('');
 
-        const sortedRoutines = computed(() => [...routines.value].sort((a,b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)));
-        const timelineTasks = computed(() => routines.value.filter(t => t.date === filterDate.value).sort((a,b) => a.startTime.localeCompare(b.startTime)));
-        const todayTasks = computed(() => routines.value.filter(t => t.date === new Date().toISOString().split('T')[0]).sort((a,b) => a.startTime.localeCompare(b.startTime)));
-        
-        const inputClasses = computed(() => isDarkMode.value ? 'bg-black border border-zinc-700 text-white' : 'bg-white border-2 border-slate-200 text-slate-900');
+        const byStart = (a, b) => a.startTime.localeCompare(b.startTime);
+        const sortedRoutines = computed(() =>
+            [...routines.value].sort((a, b) => a.date.localeCompare(b.date) || byStart(a, b)));
+        const timelineTasks = computed(() =>
+            routines.value.filter(t => t.date === filterDate.value).sort(byStart));
+        const todayTasks = computed(() =>
+            routines.value.filter(t => t.date === localDate()).sort(byStart));
+
+        const inputClasses = computed(() => isDarkMode.value
+            ? 'bg-black border border-zinc-700 text-white'
+            : 'bg-white border-2 border-slate-200 text-slate-900');
 
         const conflictStatus = computed(() => {
             let hasConflict = false; let hasFriction = false;
-            const sDate = form.value.date; const sStart = form.value.startTime;
-            if(!sDate || !sStart || !form.value.endTime) return { hasConflict, hasFriction };
-            const nStartMins = timeToMins(sStart);
+            const sDate = form.value.date, sStart = form.value.startTime, sEnd = form.value.endTime;
+            if (!sDate || !sStart || !sEnd) return { hasConflict, hasFriction };
+            const sStartMins = timeToMins(sStart);
+            const sEndMins = timeToMins(sEnd);
 
             routines.value.forEach(item => {
                 if (item.id === form.value.id || item.date !== sDate) return;
-                if (sStart < item.endTime && form.value.endTime > item.startTime) hasConflict = true;
-                if (Math.abs(nStartMins - timeToMins(item.endTime)) < 30) hasFriction = true;
+                // overlap in either direction
+                if (sStart < item.endTime && sEnd > item.startTime) hasConflict = true;
+                // <30 min buffer, checked BOTH ways (was only prev-end -> this-start)
+                const gapAfterPrev = sStartMins - timeToMins(item.endTime);
+                const gapBeforeNext = timeToMins(item.startTime) - sEndMins;
+                if ((gapAfterPrev >= 0 && gapAfterPrev < 30) ||
+                    (gapBeforeNext >= 0 && gapBeforeNext < 30)) hasFriction = true;
             });
             return { hasConflict, hasFriction };
         });
 
+        const persistRoutines = () => localStorage.setItem('asr_routines', JSON.stringify(routines.value));
+        const saveChecklist = () => localStorage.setItem('asr_checklist', JSON.stringify(checklist.value));
+
         const toggleTheme = () => {
             isDarkMode.value = !isDarkMode.value;
             localStorage.setItem('asr_theme', isDarkMode.value ? 'dark' : 'light');
-            if(chartInstance && showAnalytics.value) renderChart();
+            if (chartInstance && showAnalytics.value) renderChart();
         };
 
-        const switchTab = (tab) => { activeTab.value = tab; if(tab === 'analytics' && showAnalytics.value) nextTick(() => renderChart()); };
+        const switchTab = (tab) => {
+            activeTab.value = tab;
+            if (tab === 'analytics' && showAnalytics.value) nextTick(() => renderChart());
+        };
 
         const getTypeColor = (type) => {
             if (type === 'Exam') return { bg: 'bg-red-500', border: 'border-l-red-500', text: 'text-red-500' };
             if (type === 'Coaching') return { bg: 'bg-blue-500', border: 'border-l-blue-500', text: 'text-blue-500' };
+            if (type === 'Private') return { bg: 'bg-violet-500', border: 'border-l-violet-500', text: 'text-violet-500' };
             return { bg: 'bg-emerald-500', border: 'border-l-emerald-500', text: 'text-emerald-500' };
         };
 
         const saveTask = () => {
-            if (isEditing.value) {
-                routines.value[routines.value.findIndex(t => t.id === form.value.id)] = { ...form.value };
-            } else {
-                routines.value.push({ ...form.value, id: 'item_' + Date.now() });
+            if (!isValidTask(form.value)) {
+                alert('Invalid task: title required, valid classification, date YYYY-MM-DD, and end time after start time.');
+                return;
             }
-            localStorage.setItem('asr_routines', JSON.stringify(routines.value));
+            if (isEditing.value) {
+                const idx = routines.value.findIndex(t => t.id === form.value.id);
+                if (idx !== -1) routines.value[idx] = { ...form.value };
+            } else {
+                routines.value.push({
+                    ...form.value,
+                    id: 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+                });
+            }
+            persistRoutines();
             cancelEdit();
         };
 
         const editTask = (task) => { form.value = { ...task }; };
-        const cancelEdit = () => { form.value = { id: '', title: '', type: 'Self', date: filterDate.value, startTime: '', endTime: '' }; };
-        const deleteTask = (id) => { routines.value = routines.value.filter(t => t.id !== id); localStorage.setItem('asr_routines', JSON.stringify(routines.value)); };
+        const cancelEdit = () => {
+            form.value = { id: '', title: '', type: 'Self', date: filterDate.value, startTime: '', endTime: '' };
+        };
+
+        const deleteTask = (id) => {
+            routines.value = routines.value.filter(t => t.id !== id);
+            delete checklist.value[id];          // don't orphan checklist entries
+            persistRoutines();
+            saveChecklist();
+        };
 
         const injectJSON = () => {
+            let parsed;
             try {
-                JSON.parse(jsonPayload.value).forEach(item => {
-                    item.id = "item_" + Math.random().toString(36).substr(2, 6) + "_" + Date.now();
-                    routines.value.push(item);
-                });
-                localStorage.setItem('asr_routines', JSON.stringify(routines.value));
-                jsonPayload.value = '';
-                alert("Injection Successful!");
-            } catch (e) { alert("Syntax Error."); }
+                parsed = JSON.parse(jsonPayload.value);
+            } catch (e) {
+                alert('Syntax Error: paste valid JSON.');
+                return;
+            }
+            if (!Array.isArray(parsed)) {
+                alert('Payload must be a JSON array of tasks.');
+                return;
+            }
+            const bad = parsed.map((t, i) => (isValidTask(t) ? null : i)).filter(v => v !== null);
+            if (bad.length) {
+                alert(`Invalid task(s) at index ${bad.join(', ')} — nothing imported.`);
+                return;
+            }
+            const stamp = Date.now();
+            parsed.forEach((item, i) => {
+                routines.value.push({ ...item, id: 'item_' + stamp + '_' + i });
+            });
+            persistRoutines();
+            jsonPayload.value = '';
+            alert(`Injected ${parsed.length} task(s).`);
         };
 
         const processAnalytics = () => {
-            let completed = 0; if(todayTasks.value.length === 0) return;
-            todayTasks.value.forEach(t => { if(checklist.value[t.id]) completed++; });
+            const today = localDate();
+            if (todayTasks.value.length === 0) {
+                currentScore.value = 0;
+                aiFeedback.value = '<strong>No tasks scheduled today.</strong><br>Add one on the Manager tab, then compile again.';
+                showAnalytics.value = true;
+                nextTick(() => renderChart());
+                return;
+            }
+            const completed = todayTasks.value.filter(t => checklist.value[t.id]).length;
             currentScore.value = Math.round((completed / todayTasks.value.length) * 100);
-            
-            const today = new Date().toISOString().split('T')[0];
+
             scores.value = scores.value.filter(s => s.date !== today);
             scores.value.push({ date: today, score: currentScore.value });
             localStorage.setItem('asr_scores', JSON.stringify(scores.value));
@@ -95,13 +162,15 @@ createApp({
         };
 
         const renderChart = () => {
-            const ctx = document.getElementById('performanceChart'); if(!ctx) return;
+            const ctx = document.getElementById('performanceChart');
+            if (!ctx) return;
             if (chartInstance) chartInstance.destroy();
             const labels = []; const dataPoints = [];
-            for(let i = 6; i >= 0; i--) {
+            for (let i = 6; i >= 0; i--) {
                 const d = new Date(); d.setDate(d.getDate() - i);
+                const key = localDate(d);
                 labels.push(d.toLocaleDateString('en-US', { weekday: 'short' }));
-                const historic = scores.value.find(s => s.date === d.toISOString().split('T')[0]);
+                const historic = scores.value.find(s => s.date === key);
                 dataPoints.push(historic ? historic.score : 0);
             }
             chartInstance = new Chart(ctx, {
@@ -119,6 +188,12 @@ createApp({
             });
         };
 
-        return { activeTab, isDarkMode, filterDate, jsonPayload, routines, checklist, form, isEditing, sortedRoutines, timelineTasks, todayTasks, inputClasses, conflictStatus, showAnalytics, currentScore, aiFeedback, toggleTheme, switchTab, getTypeColor, saveTask, editTask, cancelEdit, deleteTask, injectJSON, processAnalytics };
+        return {
+            activeTab, isDarkMode, filterDate, jsonPayload, routines, checklist, form, isEditing,
+            sortedRoutines, timelineTasks, todayTasks, inputClasses, conflictStatus,
+            showAnalytics, currentScore, aiFeedback,
+            toggleTheme, switchTab, getTypeColor, saveTask, editTask, cancelEdit, deleteTask,
+            injectJSON, saveChecklist, processAnalytics
+        };
     }
 }).mount('#app');
