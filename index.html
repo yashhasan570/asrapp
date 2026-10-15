@@ -183,5 +183,16 @@
     <!-- Scripts Module Loading Hook -->
     <script src="assets/js/engine.js"></script>
     <script src="assets/js/app.js"></script>
+    <!-- Service worker: offline shell + installability. Only register where
+         the platform allows it (https or localhost). -->
+    <script>
+        if ('serviceWorker' in navigator &&
+            (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .catch((err) => console.warn('[asr] service worker registration failed:', err));
+            });
+        }
+    </script>
 </body>
 </html>
